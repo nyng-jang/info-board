@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>오늘의 진짜 정보판</title>
+<style>
+  :root{
+    --bg:#f6f5f1; --card:#fff; --ink:#1c1b19; --mute:#6b6862; --line:#e4e1d9;
+    --ok:#1f7a4d; --ok-bg:#e3f3ea; --warn:#a15c00; --warn-bg:#fdf0d9; --bad:#b3261e; --bad-bg:#fbe5e3;
+    --accent:#2a4bd7;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#141413; --card:#1e1d1b; --ink:#f0eee8; --mute:#a09d95; --line:#33312d;
+      --ok:#6fd0a0; --ok-bg:#16301f; --warn:#f0b35a; --warn-bg:#3a2a10; --bad:#ff8f86; --bad-bg:#3b1a17; --accent:#8da2ff;}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,"Pretendard","Noto Sans KR",system-ui,sans-serif}
+  .wrap{max-width:860px;margin:0 auto;padding:20px 16px 56px}
+  header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  h1{font-size:22px;margin:0}
+  .tz{color:var(--mute);font-size:13px}
+  section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+  h2{font-size:15px;margin:0 0 12px}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:14px}
+  .seg button{border:0;background:transparent;color:var(--ink);padding:8px 14px;font:inherit;cursor:pointer}
+  .seg button[aria-pressed=true]{background:var(--ink);color:var(--bg)}
+  .banner{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:8px 12px;font-size:13px;margin-bottom:12px}
+  .big{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .val{font-size:52px;font-weight:700;letter-spacing:-1px;font-variant-numeric:tabular-nums}
+  .unit{font-size:22px;color:var(--mute)}
+  .badge{display:inline-block;padding:3px 10px;border-radius:99px;font-size:13px;font-weight:600}
+  .badge.fresh{background:var(--ok-bg);color:var(--ok)}
+  .badge.stale{background:var(--warn-bg);color:var(--warn)}
+  .badge.error{background:var(--bad-bg);color:var(--bad)}
+  .badge.empty{background:var(--line);color:var(--mute)}
+  .delta{font-size:17px;margin:6px 0 14px;font-variant-numeric:tabular-nums}
+  .up{color:var(--bad)} .down{color:var(--accent)} .flat{color:var(--mute)}
+  dl{display:grid;grid-template-columns:130px 1fr;gap:6px 12px;margin:0}
+  dt{color:var(--mute)} dd{margin:0;word-break:break-all;font-variant-numeric:tabular-nums}
+  a{color:var(--accent)}
+  .err{background:var(--bad-bg);color:var(--bad);border-radius:10px;padding:10px 12px;margin:12px 0;font-size:14px}
+  .err b{display:block;margin-bottom:2px}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  button.pri{background:var(--ink);color:var(--bg);border:0;border-radius:10px;padding:10px 18px;font:inherit;font-weight:600;cursor:pointer}
+  button.sec{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font:inherit;cursor:pointer}
+  button:disabled{opacity:.5;cursor:wait}
+  .fx{display:flex;flex-wrap:wrap;gap:8px}
+  .fx button{font-family:ui-monospace,Menlo,monospace;font-size:13px}
+  .hint{color:var(--mute);font-size:13px;margin:10px 0 0}
+  table{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+  th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line)}
+  th{color:var(--mute);font-weight:500;font-size:13px}
+  .scroll{overflow-x:auto}
+  details{margin-top:12px} summary{cursor:pointer;color:var(--mute);font-size:13px}
+  pre{background:var(--bg);border-radius:8px;padding:10px;overflow:auto;font-size:12px;margin:8px 0 0}
+  ol,ul{margin:6px 0 0;padding-left:20px}
+  .todo{color:var(--warn)}
+  @media (max-width:520px){.val{font-size:42px} dl{grid-template-columns:1fr} dt{margin-top:6px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>오늘의 진짜 정보판</h1>
+    <span class="tz">기준 시간대 Asia/Seoul (KST) · 로그인 불필요 · 개인정보 0건</span>
+  </header>
+
+  <div class="seg" role="group" aria-label="데이터 모드">
+    <button id="m-live" aria-pressed="true">실제 API</button>
+    <button id="m-synth" aria-pressed="false">합성 재생</button>
+  </div>
+  <div id="banner" class="banner" hidden>합성 재생 모드입니다. 실제 데이터가 아니며, 날짜는 가상(2026-01-01, 01-02)이고 실제 기록과 분리 저장됩니다.</div>
+
+  <!-- 1. 메인 카드 -->
+  <section id="main" aria-live="polite">
+    <div class="big">
+      <span class="val" id="val">–</span><span class="unit" id="unit"></span>
+      <span class="badge empty" id="badge">불러오는 중</span>
+    </div>
+    <div class="delta" id="delta"></div>
+    <div id="err"></div>
+    <dl>
+      <dt>값 / 단위</dt><dd id="d-val">–</dd>
+      <dt>출처</dt><dd id="d-src">–</dd>
+      <dt>출처 시각</dt><dd id="d-stime">–</dd>
+      <dt>조회 시각</dt><dd id="d-ftime">–</dd>
+      <dt>기준 시간대</dt><dd>Asia/Seoul (KST, +09:00)</dd>
+    </dl>
+    <details><summary>원자료 ↔ 저장값 ↔ 화면값 대조</summary>
+      <pre id="raw">–</pre>
+    </details>
+    <div class="actions">
+      <button class="pri" id="retry">다시 시도</button>
+    </div>
+    <p class="hint" id="retry-hint"></p>
+  </section>
+
+  <!-- 2. 합성 장애 패널 -->
+  <section id="synth-panel" hidden>
+    <h2>합성 장애 재생 (심사용)</h2>
+    <div class="fx" id="fx"></div>
+    <p class="hint">순서 예: NORMAL-D1-A → TIMEOUT(마지막 정상값 유지·stale) → 다시 시도(= RECOVER-D2, fresh·다음 날짜 1건 추가). 같은 날 NORMAL-D1-B를 누르면 기록은 늘지 않고 갱신만 됩니다.</p>
+    <div class="actions"><button class="sec" id="reset">합성 기록 초기화</button></div>
+  </section>
+
+  <!-- 3. 일별 기록 -->
+  <section>
+    <h2>일별 기록 (Asia/Seoul 기준 하루 1건)</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>날짜 (KST)</th><th>출처 시각</th><th>값</th><th>어제 대비</th><th>출처 URL</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="5" class="flat">기록 없음</td></tr></tbody>
+      </table>
+    </div>
+    <p class="hint" id="rows-hint"></p>
+  </section>
+
+  <!-- 4. 확인 방법 -->
+  <section>
+    <h2>짧은 확인 방법</h2>
+    <ol>
+      <li><b>어디로 가나요?</b> <span id="url">이 페이지</span></li>
+      <li><b>3단계 이내 행동</b> ① 접속 → ② 「합성 재생」에서 TIMEOUT 선택 → ③ 「다시 시도」 클릭</li>
+      <li><b>무엇이 보이면 통과인가요?</b> ②에서 마지막 정상값이 그대로 남고 「Stale」 배지와 timeout 안내가 뜬다. ③ 뒤에는 「Fresh」, 오류 코드 none, 일별 기록이 1건 늘어난다.</li>
+      <li><b>안 될 때 무엇이 보이나요?</b> 값은 지워지지 않고 「Stale / 오래된 값」 배지와 실패 종류·마지막 시도 시각이 표시된다. 정상값이 한 번도 없으면 「오류 · 저장된 값 없음」이 보인다.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>AI와 나의 판단</h2>
+    <ul>
+      <li><b>AI에게 맡긴 일</b> 정보판 화면과 서버 코드 초안 작성, 실패 5종 분류 로직, 합성 재생 시나리오 구성.</li>
+      <li class="todo"><b>직접 판단한 일</b> (직접 작성: 데이터 선택 이유, 일별 기준 정의 등)</li>
+      <li class="todo"><b>AI 제안을 따르지 않은 일</b> (직접 작성. 없었다면 없었던 이유)</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let ns = 'live';
+let busy = false;
+let last = null;
+
+const fmtTime = (s) => (s ? s.replace('T', ' ').replace('+09:00', ' KST') : '–');
+const kstToday = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date());
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const sign = (n) => (n > 0 ? '+' : '') + n;
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.message || j.error || r.status);
+  return j;
+}
+
+function render(s) {
+  last = s;
+  const L = s.latest, m = s.meta;
+
+  // 배지
+  let cls = 'empty', txt = '기록 없음';
+  if (m.status === 'fresh') { cls = 'fresh'; txt = 'Fresh'; }
+  else if (m.status === 'stale') { cls = 'stale'; txt = 'Stale / 오래된 값'; }
+  else if (m.status === 'error_no_data') { cls = 'error'; txt = '오류 · 저장된 값 없음'; }
+  $('badge').className = 'badge ' + cls;
+  $('badge').textContent = txt + (m.status === 'stale' || m.status === 'error_no_data' ? ' · ' + m.errorCode : '');
+
+  // 값
+  $('val').textContent = L ? L.value.toFixed(1) : '–';
+  $('unit').textContent = L ? L.unit : '';
+  const d = L && L.delta;
+  if (d) {
+    const arrow = d.value > 0 ? '▲' : d.value < 0 ? '▼' : '–';
+    const c = d.value > 0 ? 'up' : d.value < 0 ? 'down' : 'flat';
+    const base = d.gapDays === 1 ? '어제 대비' : `직전 기록(${d.prevDay}, ${d.gapDays}일 전) 대비`;
+    $('delta').innerHTML = `<span class="${c}">${arrow} ${sign(d.value)} ${esc(L.unit)}${d.pct !== null ? ` (${sign(d.pct)}%)` : ''}</span> <span class="flat">${esc(base)}</span>`;
+  } else {
+    $('delta').innerHTML = `<span class="flat">${L ? '비교할 이전 날짜 기록이 아직 없습니다 (내일부터 어제 대비가 계산됩니다)' : ''}</span>`;
+  }
+
+  // 오류 안내 (마지막 정상값은 그대로 유지)
+  const bad = m.status === 'stale' || m.status === 'error_no_data';
+  $('err').innerHTML = bad
+    ? `<div class="err"><b>${esc(m.errorMessage)}</b>${m.status === 'stale' ? `마지막 정상값(조회 ${esc(fmtTime(L.fetchedAt))})을 표시합니다. 마지막 시도: ${esc(fmtTime(m.lastAttemptAt && new Date(m.lastAttemptAt).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).replace(' ', 'T') + '+09:00'))}` : '아직 저장된 정상값이 없습니다.'}</div>`
+    : '';
+
+  // 메타 6항목
+  $('d-val').textContent = L ? `${L.value.toFixed(1)} ${L.unit}` : '–';
+  $('d-src').innerHTML = L ? `${esc(L.source)} · <a href="${esc(L.sourceUrl)}" target="_blank" rel="noopener">원천 URL</a>` : esc(s.source.name);
+  $('d-stime').textContent = L ? fmtTime(L.sourceTime) : '–';
+  $('d-ftime').textContent = L ? fmtTime(L.fetchedAt) : '–';
+
+  // 원자료/저장값/화면값
+  $('raw').textContent = L
+    ? `원자료(API current): ${L.raw}\n저장값(DB): value=${L.value} unit=${L.unit} day=${L.day}\n화면값: ${L.value.toFixed(1)} ${L.unit}`
+    : '–';
+
+  // 표
+  $('rows').innerHTML = s.days.length
+    ? s.days.map((r) => {
+        const dd = r.delta
+          ? `${r.delta.value > 0 ? '▲' : r.delta.value < 0 ? '▼' : '–'} ${sign(r.delta.value)} ${esc(r.unit)}${r.delta.gapDays !== 1 ? ` <span class="flat">(${r.delta.gapDays}일 전 대비)</span>` : ''}`
+          : '<span class="flat">–</span>';
+        return `<tr><td>${esc(r.day)}</td><td>${esc(fmtTime(r.sourceTime))}</td><td>${r.value.toFixed(1)} ${esc(r.unit)}</td><td>${dd}</td><td><a href="${esc(r.sourceUrl)}" target="_blank" rel="noopener">Open-Meteo</a></td></tr>`;
+      }).join('')
+    : '<tr><td colspan="5" class="flat">기록 없음</td></tr>';
+  $('rows-hint').textContent = s.days.length < 2 && ns === 'live'
+    ? '서로 다른 날짜 2건이 쌓이면 어제 대비가 표시됩니다. 하루 1회 자동 수집됩니다.' : '';
+
+  $('retry-hint').textContent = ns === 'synth' ? '합성 모드에서는 「다시 시도」가 RECOVER-D2 복구 시나리오를 재생합니다.' : '';
+}
+
+async function run(path, opts) {
+  if (busy) return;
+  busy = true;
+  document.querySelectorAll('button').forEach((b) => (b.disabled = true));
+  try {
+    render(await api(path, opts));
+  } catch (e) {
+    // 우리 서버에 닿지 못해도 화면의 마지막 값은 지우지 않는다
+    $('err').innerHTML = `<div class="err"><b>정보판 서버에 연결하지 못했습니다.</b>${esc(e.message)}</div>` ;
+  } finally {
+    busy = false;
+    document.querySelectorAll('button').forEach((b) => (b.disabled = false));
+  }
+}
+
+async function load() {
+  await run(`/api/board?ns=${ns}`);
+  // 실제 모드: 오늘(KST) 기록이 없으면 한 번 수집
+  if (ns === 'live' && last && (!last.latest || last.latest.day !== kstToday()) && last.meta.status !== 'stale') {
+    await run('/api/refresh?ns=live', { method: 'POST' });
+  }
+}
+
+function setMode(next) {
+  ns = next;
+  $('m-live').setAttribute('aria-pressed', next === 'live');
+  $('m-synth').setAttribute('aria-pressed', next === 'synth');
+  $('banner').hidden = next !== 'synth';
+  $('synth-panel').hidden = next !== 'synth';
+  load();
+}
+
+$('m-live').onclick = () => setMode('live');
+$('m-synth').onclick = () => setMode('synth');
+$('retry').onclick = () =>
+  run(ns === 'synth' ? '/api/refresh?ns=synth&fixture=RECOVER-D2' : '/api/refresh?ns=live', { method: 'POST' });
+$('reset').onclick = () => run('/api/refresh?ns=synth&reset=1', { method: 'POST' });
+
+['NORMAL-D1-A', 'NORMAL-D1-B', 'TIMEOUT', 'AUTH-401', 'RATE-429', 'OFFLINE', 'SCHEMA-BREAK', 'RECOVER-D2'].forEach((id) => {
+  const b = document.createElement('button');
+  b.className = 'sec'; b.textContent = id;
+  b.onclick = () => run(`/api/refresh?ns=synth&fixture=${id}`, { method: 'POST' });
+  $('fx').appendChild(b);
+});
+
+$('url').textContent = location.origin + '/';
+load();
+</script>
+</body>
+</html>
