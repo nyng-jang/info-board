@@ -54,8 +54,7 @@
   .scroll{overflow-x:auto}
   details{margin-top:12px} summary{cursor:pointer;color:var(--mute);font-size:13px}
   pre{background:var(--bg);border-radius:8px;padding:10px;overflow:auto;font-size:12px;margin:8px 0 0}
-  ol,ul{margin:6px 0 0;padding-left:20px}
-  .todo{color:var(--warn)}
+  code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
   @media (max-width:520px){.val{font-size:42px} dl{grid-template-columns:1fr} dt{margin-top:6px}}
 </style>
 </head>
@@ -70,9 +69,9 @@
     <button id="m-live" aria-pressed="true">실제 API</button>
     <button id="m-synth" aria-pressed="false">합성 재생</button>
   </div>
-  <div id="banner" class="banner" hidden>합성 재생 모드입니다. 실제 데이터가 아니며, 날짜는 가상(2026-01-01, 01-02)이고 실제 기록과 분리 저장됩니다.</div>
+  <div id="banner" class="banner" hidden>합성 재생 모드입니다. 값은 공개 합성 fixture(가상 날짜 2026-08-24, 08-25)이며 실제 데이터가 아니고, 실제 기록과 분리 저장됩니다.</div>
 
-  <!-- 1. 메인 카드 -->
+  <!-- 메인 카드 -->
   <section id="main" aria-live="polite">
     <div class="big">
       <span class="val" id="val">–</span><span class="unit" id="unit"></span>
@@ -86,6 +85,8 @@
       <dt>출처 시각</dt><dd id="d-stime">–</dd>
       <dt>조회 시각</dt><dd id="d-ftime">–</dd>
       <dt>기준 시간대</dt><dd>Asia/Seoul (KST, +09:00)</dd>
+      <dt>상태 / 오류 코드</dt><dd id="d-status">–</dd>
+      <dt>기록 ID</dt><dd id="d-rid">–</dd>
     </dl>
     <details><summary>원자료 ↔ 저장값 ↔ 화면값 대조</summary>
       <pre id="raw">–</pre>
@@ -96,21 +97,23 @@
     <p class="hint" id="retry-hint"></p>
   </section>
 
-  <!-- 2. 합성 장애 패널 -->
+  <!-- 합성 장애 패널 -->
   <section id="synth-panel" hidden>
-    <h2>합성 장애 재생 (심사용)</h2>
+    <h2>합성 재생 (공개 fixture)</h2>
     <div class="fx" id="fx"></div>
-    <p class="hint">순서 예: NORMAL-D1-A → TIMEOUT(마지막 정상값 유지·stale) → 다시 시도(= RECOVER-D2, fresh·다음 날짜 1건 추가). 같은 날 NORMAL-D1-B를 누르면 기록은 늘지 않고 갱신만 됩니다.</p>
-    <div class="actions"><button class="sec" id="reset">합성 기록 초기화</button></div>
+    <p class="hint">정상·일별 저장: 초기화 → T04-NORMAL-D1-A → T04-NORMAL-D1-B → T04-NORMAL-D2<br>
+      실패 한 가지: 초기화 → D1-A → D1-B → 실패 fixture 하나<br>
+      오류 뒤 회복: 초기화 → D1-A → D1-B → T04-TIMEOUT → 「다시 시도」(= T04-RECOVER-D2)</p>
+    <div class="actions"><button class="sec" id="reset">초기화 (합성 기록만 비움)</button></div>
   </section>
 
-  <!-- 3. 일별 기록 -->
+  <!-- 일별 기록 -->
   <section>
     <h2>일별 기록 (Asia/Seoul 기준 하루 1건)</h2>
     <div class="scroll">
       <table>
-        <thead><tr><th>날짜 (KST)</th><th>출처 시각</th><th>값</th><th>어제 대비</th><th>출처 URL</th></tr></thead>
-        <tbody id="rows"><tr><td colspan="5" class="flat">기록 없음</td></tr></tbody>
+        <thead><tr><th>날짜 (KST)</th><th>기록 ID</th><th>출처 시각</th><th>값</th><th>어제 대비</th><th>출처</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="6" class="flat">기록 없음</td></tr></tbody>
       </table>
     </div>
     <p class="hint" id="rows-hint"></p>
@@ -122,11 +125,16 @@ const $ = (id) => document.getElementById(id);
 let ns = 'live';
 let busy = false;
 let last = null;
+let fxBuilt = false;
 
-const fmtTime = (s) => (s ? s.replace('T', ' ').replace('+09:00', ' KST') : '–');
+const kstFmt = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'medium' });
+// ISO(UTC 또는 +09:00) → "2026-08-24 09:00:00 KST"
+const fmtTime = (iso) => (iso ? kstFmt.format(new Date(iso)) + ' KST' : null);
+const NO_STIME = '출처가 시각을 제공하지 않음';
 const kstToday = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date());
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const sign = (n) => (n > 0 ? '+' : '') + n;
+const num = (n) => (Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100));
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -141,61 +149,96 @@ async function api(path, opts) {
   return j;
 }
 
+function cmpText(row) {
+  const c = row.comparison;
+  if (!c) return null;
+  if (c.state === 'unit_mismatch') return '<span class="flat">단위가 달라 비교할 수 없음</span>';
+  const arrow = c.signed > 0 ? '▲' : c.signed < 0 ? '▼' : '–';
+  const cls = c.signed > 0 ? 'up' : c.signed < 0 ? 'down' : 'flat';
+  const base = c.gap_days === 1 ? '어제 대비' : `직전 기록(${c.prev_date}, ${c.gap_days}일 전) 대비`;
+  return { html: `<span class="${cls}">${arrow} ${sign(num(c.signed) * 1)} ${esc(row.unit)}${c.pct !== null ? ` (${sign(c.pct)}%)` : ''}</span>`, base };
+}
+
 function render(s) {
   last = s;
   const L = s.latest, m = s.meta;
+  const bad = m.freshness === 'stale';
 
-  // 배지
+  // 배지: freshness 와 error_code 는 다른 필드
   let cls = 'empty', txt = '기록 없음';
-  if (m.status === 'fresh') { cls = 'fresh'; txt = 'Fresh'; }
-  else if (m.status === 'stale') { cls = 'stale'; txt = 'Stale / 오래된 값'; }
-  else if (m.status === 'error_no_data') { cls = 'error'; txt = '오류 · 저장된 값 없음'; }
+  if (m.freshness === 'fresh') { cls = 'fresh'; txt = 'Fresh'; }
+  else if (bad && L) { cls = 'stale'; txt = 'Stale / 오래된 값'; }
+  else if (bad) { cls = 'error'; txt = '오류 · 저장된 값 없음'; }
   $('badge').className = 'badge ' + cls;
-  $('badge').textContent = txt + (m.status === 'stale' || m.status === 'error_no_data' ? ' · ' + m.errorCode : '');
+  $('badge').textContent = txt;
 
-  // 값
-  $('val').textContent = L ? L.value.toFixed(1) : '–';
+  // 값 (마지막 정상값은 실패해도 그대로)
+  $('val').textContent = L ? num(L.normalized_value) : '–';
   $('unit').textContent = L ? L.unit : '';
-  const d = L && L.delta;
-  if (d) {
-    const arrow = d.value > 0 ? '▲' : d.value < 0 ? '▼' : '–';
-    const c = d.value > 0 ? 'up' : d.value < 0 ? 'down' : 'flat';
-    const base = d.gapDays === 1 ? '어제 대비' : `직전 기록(${d.prevDay}, ${d.gapDays}일 전) 대비`;
-    $('delta').innerHTML = `<span class="${c}">${arrow} ${sign(d.value)} ${esc(L.unit)}${d.pct !== null ? ` (${sign(d.pct)}%)` : ''}</span> <span class="flat">${esc(base)}</span>`;
+
+  const c = L && cmpText(L);
+  if (c && c.html) $('delta').innerHTML = `${c.html} <span class="flat">${esc(c.base)}</span>`;
+  else if (c) $('delta').innerHTML = c;
+  else $('delta').innerHTML = `<span class="flat">${L ? '비교할 이전 날짜 기록이 아직 없습니다 (다음 날짜부터 어제 대비가 계산됩니다)' : ''}</span>`;
+
+  // 오류 안내
+  if (bad) {
+    const lr = m.last_run || {};
+    const when = lr.at ? fmtTime(lr.at) : '–';
+    const retry = lr.retry_after_seconds ? ` · Retry-After ${lr.retry_after_seconds}초` : '';
+    $('err').innerHTML = `<div class="err"><b>${esc(m.error_message)}</b>${
+      L ? `마지막 정상값(조회 ${esc(fmtTime(L.fetched_at))})을 그대로 표시합니다.` : '아직 저장된 정상값이 없습니다.'
+    } 마지막 시도: ${esc(when)}${esc(retry)}</div>`;
   } else {
-    $('delta').innerHTML = `<span class="flat">${L ? '비교할 이전 날짜 기록이 아직 없습니다 (내일부터 어제 대비가 계산됩니다)' : ''}</span>`;
+    $('err').innerHTML = '';
   }
 
-  // 오류 안내 (마지막 정상값은 그대로 유지)
-  const bad = m.status === 'stale' || m.status === 'error_no_data';
-  $('err').innerHTML = bad
-    ? `<div class="err"><b>${esc(m.errorMessage)}</b>${m.status === 'stale' ? `마지막 정상값(조회 ${esc(fmtTime(L.fetchedAt))})을 표시합니다. 마지막 시도: ${esc(fmtTime(m.lastAttemptAt && new Date(m.lastAttemptAt).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).replace(' ', 'T') + '+09:00'))}` : '아직 저장된 정상값이 없습니다.'}</div>`
-    : '';
+  // 필수 6항목 + 상태
+  $('d-val').textContent = L ? `${num(L.normalized_value)} ${L.unit}` : '–';
+  const isSynth = ns === 'synth';
+  $('d-src').innerHTML = L
+    ? (isSynth
+        ? `${esc(L.source_name)} · <code>${esc(L.source_url)}</code> (합성 fixture 주소)`
+        : `${esc(L.source_name)} · <a href="${esc(L.source_url)}" target="_blank" rel="noopener">원천 URL</a>`)
+    : '–';
+  $('d-stime').textContent = L ? (fmtTime(L.source_time) || NO_STIME) : '–';
+  $('d-ftime').textContent = L ? fmtTime(L.fetched_at) : '–';
+  $('d-status').innerHTML = m.freshness
+    ? `freshness: <code>${esc(m.freshness)}</code> · error_code: <code>${esc(m.error_code)}</code>`
+    : '–';
+  $('d-rid').textContent = L ? L.record_id : '–';
 
-  // 메타 6항목
-  $('d-val').textContent = L ? `${L.value.toFixed(1)} ${L.unit}` : '–';
-  $('d-src').innerHTML = L ? `${esc(L.source)} · <a href="${esc(L.sourceUrl)}" target="_blank" rel="noopener">원천 URL</a>` : esc(s.source.name);
-  $('d-stime').textContent = L ? fmtTime(L.sourceTime) : '–';
-  $('d-ftime').textContent = L ? fmtTime(L.fetchedAt) : '–';
-
-  // 원자료/저장값/화면값
   $('raw').textContent = L
-    ? `원자료(API current): ${L.raw}\n저장값(DB): value=${L.value} unit=${L.unit} day=${L.day}\n화면값: ${L.value.toFixed(1)} ${L.unit}`
+    ? `원자료: ${L.raw}\n저장값(DB): normalized_value=${L.normalized_value} unit=${L.unit} record_date=${L.record_date}\n화면값: ${num(L.normalized_value)} ${L.unit}`
     : '–';
 
   // 표
-  $('rows').innerHTML = s.days.length
-    ? s.days.map((r) => {
-        const dd = r.delta
-          ? `${r.delta.value > 0 ? '▲' : r.delta.value < 0 ? '▼' : '–'} ${sign(r.delta.value)} ${esc(r.unit)}${r.delta.gapDays !== 1 ? ` <span class="flat">(${r.delta.gapDays}일 전 대비)</span>` : ''}`
-          : '<span class="flat">–</span>';
-        return `<tr><td>${esc(r.day)}</td><td>${esc(fmtTime(r.sourceTime))}</td><td>${r.value.toFixed(1)} ${esc(r.unit)}</td><td>${dd}</td><td><a href="${esc(r.sourceUrl)}" target="_blank" rel="noopener">Open-Meteo</a></td></tr>`;
+  $('rows').innerHTML = s.rows.length
+    ? s.rows.map((r) => {
+        const cc = cmpText(r);
+        const dd = !cc ? '<span class="flat">–</span>'
+          : cc.html ? cc.html + (r.comparison.gap_days !== 1 ? ` <span class="flat">(${r.comparison.gap_days}일 전 대비)</span>` : '')
+          : cc;
+        const src = isSynth ? '합성 fixture' : `<a href="${esc(r.source_url)}" target="_blank" rel="noopener">Open-Meteo</a>`;
+        return `<tr><td>${esc(r.record_date)}</td><td><code>${esc(r.record_id)}</code></td><td>${esc(fmtTime(r.source_time) || NO_STIME)}</td><td>${num(r.normalized_value)} ${esc(r.unit)}</td><td>${dd}</td><td>${src}</td></tr>`;
       }).join('')
-    : '<tr><td colspan="5" class="flat">기록 없음</td></tr>';
-  $('rows-hint').textContent = s.days.length < 2 && ns === 'live'
+    : '<tr><td colspan="6" class="flat">기록 없음</td></tr>';
+  $('rows-hint').textContent = s.row_count < 2 && ns === 'live'
     ? '서로 다른 날짜 2건이 쌓이면 어제 대비가 표시됩니다. 하루 1회 자동 수집됩니다.' : '';
+  $('retry-hint').textContent = isSynth ? '합성 모드에서는 「다시 시도」가 T04-RECOVER-D2를 재생합니다.' : '';
 
-  $('retry-hint').textContent = ns === 'synth' ? '합성 모드에서는 「다시 시도」가 RECOVER-D2 복구 시나리오를 재생합니다.' : '';
+  if (isSynth && s.fixtures && !fxBuilt) buildFixtureButtons(s.fixtures);
+}
+
+function buildFixtureButtons(ids) {
+  $('fx').innerHTML = '';
+  ids.forEach((id) => {
+    const b = document.createElement('button');
+    b.className = 'sec'; b.textContent = id;
+    b.onclick = () => run(`/api/refresh?ns=synth&fixture=${encodeURIComponent(id)}`, { method: 'POST' });
+    $('fx').appendChild(b);
+  });
+  fxBuilt = true;
 }
 
 async function run(path, opts) {
@@ -206,7 +249,7 @@ async function run(path, opts) {
     render(await api(path, opts));
   } catch (e) {
     // 우리 서버에 닿지 못해도 화면의 마지막 값은 지우지 않는다
-    $('err').innerHTML = `<div class="err"><b>정보판 서버에 연결하지 못했습니다.</b>${esc(e.message)}</div>` ;
+    $('err').innerHTML = `<div class="err"><b>정보판 서버에 연결하지 못했습니다.</b>${esc(e.message)}</div>`;
   } finally {
     busy = false;
     document.querySelectorAll('button').forEach((b) => (b.disabled = false));
@@ -216,7 +259,7 @@ async function run(path, opts) {
 async function load() {
   await run(`/api/board?ns=${ns}`);
   // 실제 모드: 오늘(KST) 기록이 없으면 한 번 수집
-  if (ns === 'live' && last && (!last.latest || last.latest.day !== kstToday()) && last.meta.status !== 'stale') {
+  if (ns === 'live' && last && (!last.latest || last.latest.record_date !== kstToday()) && last.meta.freshness !== 'stale') {
     await run('/api/refresh?ns=live', { method: 'POST' });
   }
 }
@@ -233,15 +276,8 @@ function setMode(next) {
 $('m-live').onclick = () => setMode('live');
 $('m-synth').onclick = () => setMode('synth');
 $('retry').onclick = () =>
-  run(ns === 'synth' ? '/api/refresh?ns=synth&fixture=RECOVER-D2' : '/api/refresh?ns=live', { method: 'POST' });
+  run(ns === 'synth' ? '/api/refresh?ns=synth&fixture=T04-RECOVER-D2' : '/api/refresh?ns=live', { method: 'POST' });
 $('reset').onclick = () => run('/api/refresh?ns=synth&reset=1', { method: 'POST' });
-
-['NORMAL-D1-A', 'NORMAL-D1-B', 'TIMEOUT', 'AUTH-401', 'RATE-429', 'OFFLINE', 'SCHEMA-BREAK', 'RECOVER-D2'].forEach((id) => {
-  const b = document.createElement('button');
-  b.className = 'sec'; b.textContent = id;
-  b.onclick = () => run(`/api/refresh?ns=synth&fixture=${id}`, { method: 'POST' });
-  $('fx').appendChild(b);
-});
 
 load();
 </script>
