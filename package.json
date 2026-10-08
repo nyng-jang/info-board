@@ -1,0 +1,7 @@
+{
+  "name": "t04-info-board",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" }
+}
