@@ -115,26 +115,6 @@
     </div>
     <p class="hint" id="rows-hint"></p>
   </section>
-
-  <!-- 4. 확인 방법 -->
-  <section>
-    <h2>짧은 확인 방법</h2>
-    <ol>
-      <li><b>어디로 가나요?</b> <span id="url">이 페이지</span></li>
-      <li><b>3단계 이내 행동</b> ① 접속 → ② 「합성 재생」에서 TIMEOUT 선택 → ③ 「다시 시도」 클릭</li>
-      <li><b>무엇이 보이면 통과인가요?</b> ②에서 마지막 정상값이 그대로 남고 「Stale」 배지와 timeout 안내가 뜬다. ③ 뒤에는 「Fresh」, 오류 코드 none, 일별 기록이 1건 늘어난다.</li>
-      <li><b>안 될 때 무엇이 보이나요?</b> 값은 지워지지 않고 「Stale / 오래된 값」 배지와 실패 종류·마지막 시도 시각이 표시된다. 정상값이 한 번도 없으면 「오류 · 저장된 값 없음」이 보인다.</li>
-    </ol>
-  </section>
-
-  <section>
-    <h2>AI와 나의 판단</h2>
-    <ul>
-      <li><b>AI에게 맡긴 일</b> 정보판 화면과 서버 코드 초안 작성, 실패 5종 분류 로직, 합성 재생 시나리오 구성.</li>
-      <li class="todo"><b>직접 판단한 일</b> (직접 작성: 데이터 선택 이유, 일별 기준 정의 등)</li>
-      <li class="todo"><b>AI 제안을 따르지 않은 일</b> (직접 작성. 없었다면 없었던 이유)</li>
-    </ul>
-  </section>
 </div>
 
 <script>
@@ -150,7 +130,13 @@ const sign = (n) => (n > 0 ? '+' : '') + n;
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
-  const j = await r.json();
+  let j;
+  try { j = await r.json(); }
+  catch {
+    throw new Error(r.status === 404
+      ? 'API를 찾을 수 없습니다(404). 배포에 api 폴더가 포함되지 않았거나 프로젝트 루트가 잘못 지정되었습니다.'
+      : `서버가 JSON이 아닌 응답을 보냈습니다(HTTP ${r.status}).`);
+  }
   if (!r.ok) throw new Error(j.message || j.error || r.status);
   return j;
 }
@@ -257,7 +243,6 @@ $('reset').onclick = () => run('/api/refresh?ns=synth&reset=1', { method: 'POST'
   $('fx').appendChild(b);
 });
 
-$('url').textContent = location.origin + '/';
 load();
 </script>
 </body>
